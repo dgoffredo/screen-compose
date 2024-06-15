@@ -6,7 +6,6 @@ import getpass
 import json
 from pathlib import Path
 import shlex
-import shutil  # TODO: no
 import subprocess
 import sys
 import tempfile
@@ -14,7 +13,7 @@ from typing import Iterable, List, Optional, Union
 
 
 def debug(*args, **kwargs):
-    debugging = True
+    debugging = False
     if debugging:
         print(*args, **kwargs)
 
@@ -258,8 +257,7 @@ def fill_directory(dir: Path,
         #
         # Instead, create a final window within screen that deletes the
         # temporary directory and then exits.
-        # TODO: why the sleep?
-        script_lines = [shlex.join(['rm', '-r', str(dir)]), 'sleep 3', 'exit']
+        script_lines = [shlex.join(['rm', '-r', str(dir)]), 'exit']
         cleanup_path = dir / 'cleanup.sh'
         cleanup_path.write_text('\n'.join(script_lines) + '\n')
         lines = ['', 'screen', f'readreg p {cleanup_path}', 'paste p']
@@ -317,23 +315,22 @@ if __name__ == '__main__':
 
     debug(config)
 
-    with tempfile.TemporaryDirectory() as workdir:
-        debug('temporary directory is', workdir)
-        dirpath = Path(workdir)
-        shell = deduce_user_shell()
-        debug(f'login shell is {shell}')
-        fill_directory(dirpath, config.windows, config.prelude, shell)
-        screen_cmd = ['screen', '-d', '-m']
-        if options.session_name:
-            screen_cmd += ['-S', options.session_name]
-        screen_cmd += ['-c', str(dirpath / 'rc')]
-        # Rather than invoking `screen` directly, wrap it in a shell script that
-        # first sources the user's profile.
-        # This is helpful when `cron` is the one invoking us, since such
-        # invocations do not occur in a login shell environment.
-        # A login shell environment is not necessary, but it's what a user is
-        # likely to expect, since it's what they'd have if they ran `screen`
-        # themselves.
-        shell_script = '\n'.join(['. ~/.profile', shlex.join(screen_cmd), ''])
-        subprocess.run([shell], text=True, input=shell_script, check=True)
-        shutil.copytree(workdir, '/tmp/thingy')  # TODO: no
+    workdir = tempfile.mkdtemp()
+    debug('temporary directory is', workdir)
+    dirpath = Path(workdir)
+    shell = deduce_user_shell()
+    debug(f'login shell is {shell}')
+    fill_directory(dirpath, config.windows, config.prelude, shell)
+    screen_cmd = ['screen', '-d', '-m']
+    if options.session_name:
+        screen_cmd += ['-S', options.session_name]
+    screen_cmd += ['-c', str(dirpath / 'rc')]
+    # Rather than invoking `screen` directly, wrap it in a shell script that
+    # first sources the user's profile.
+    # This is helpful when `cron` is the one invoking us, since such
+    # invocations do not occur in a login shell environment.
+    # A login shell environment is not necessary, but it's what a user is
+    # likely to expect, since it's what they'd have if they ran `screen`
+    # themselves.
+    shell_script = '\n'.join(['. ~/.profile', shlex.join(screen_cmd), ''])
+    subprocess.run([shell], text=True, input=shell_script, check=True)
