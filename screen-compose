@@ -3,12 +3,20 @@
 import argparse
 from dataclasses import dataclass
 import getpass
+import json
 from pathlib import Path
 import shlex
+import shutil  # TODO: no
 import subprocess
 import sys
 import tempfile
 from typing import Iterable, List, Optional, Union
+
+
+def debug(*args, **kwargs):
+    debugging = True
+    if debugging:
+        print(*args, **kwargs)
 
 
 @dataclass
@@ -26,8 +34,9 @@ class Config:
     # windows are the other sections of the configuration: one for each GNU
     # screen window.
     windows: List[Window]
-    # prelude is the .screenrc script to run after the hard-coded commands.
-    # prelude is empty if the configuration did not have a @prelude section.
+    # prelude is the GNU screen command script to run after the hard-coded
+    # commands. prelude is empty if the configuration did not have a @prelude
+    # section.
     prelude: str = ''
 
 
@@ -41,6 +50,16 @@ class CommandLine:
     # session_name, if nonempty, overrides the name of the GNU screen session.
     # If empty, then GNU screen will generate a name instead.
     session_name: str = ''
+
+
+def check_window_title(title: str) -> Optional[str]:
+    """If the specified GNU screen window title is valid, return `None`. If the
+    title is invalid, then return a string explaining why.
+    """
+    for verboten in ('"', '\\'):
+        if verboten in title:
+            return f'title contains the disallowed character {repr(verboten)}'
+    return None
 
 
 def parse_config(lines: Iterable[str]) -> Config:
@@ -79,7 +98,7 @@ def parse_config(lines: Iterable[str]) -> Config:
     #     3  False                   False
     # ```
     for num, line in enumerate(lines, start=1):
-        print(f'current line is: {repr(line)}')  # TODO: no
+        debug(f'current line is: {repr(line)}')
         # If there's a trailing newline, trim it off.  We'll add it back later
         # with `'\n'.join(...)` if necessary.
         if line.endswith('\n'):
@@ -116,6 +135,11 @@ def parse_config(lines: Iterable[str]) -> Config:
                     break  # consume next line of input
                 else:
                     # It's a window title.
+                    error_msg = check_window_title(line)
+                    if error_msg is not None:
+                        raise Exception(
+                            f'Error on line {num}: Invalid window title: {error_msg}'
+                        )
                     current_block = Window(title=line)
                     break  # consume next line of input
             # state 2?
@@ -186,7 +210,63 @@ def fill_directory(dir: Path,
     optionally specified `prelude` of screen commands. Optionally specify
     `shell_path`, a path to the command shell to use in the created windows.
     """
-    'TODO'
+    # Even if `prelude` is nonempty, our generated .screenrc file ("rc") will
+    # always start with the `hardcoded_prelude_lines` commands. `prelude` can
+    # then override them, if desired.
+    hardcoded_prelude_lines = [
+        'startup_message off',
+        '# from <https://gist.github.com/ChrisWills/1337178>', 'hardstatus on',
+        'hardstatus alwayslastline',
+        "hardstatus string '%{= Kd} %{= Kd}%-w%{= Kr}[%{= KW}%n %t%{= Kr}]%{= Kd}%+w %-= %{KG} %H%{KW}|%{KY}%101`%{KW}|%D %M %d %Y%{= Kc} %C%A%{-}'"
+    ]
+    if shell_path:
+        hardcoded_prelude_lines.append(f'shell {shell_path}')
+
+    prelude = '\n'.join([*hardcoded_prelude_lines, prelude, ''])
+    with open(dir / 'rc', 'w') as screenrc:
+        screenrc.write(prelude)
+        for i, window in enumerate(windows, start=1):
+            lines = [
+                '',  # blank line
+                'screen',  # Open a new window.
+                # Give the current window a title.
+                f'title {json.dumps(window.title)}',
+                'chdir',  # cd into the user's home directory.
+            ]
+            if window.script != '':
+                script = window.script
+                if not script.endswith('\n'):
+                    script = script + '\n'
+                script_path = dir / f'{i}.sh'
+                # Append a newline to ensure that the last shell command is
+                # submitted.
+                script_path.write_text(script + '\n')
+                lines += [
+                    # Read the shell script into a "register" named "p".
+                    f'readreg p {script_path}',
+                    # Write the contents of the register "p" into the current
+                    # window's input buffer.
+                    'paste p'
+                ]
+            screenrc.write('\n'.join(lines) + '\n')
+        # There's one more thing to do. Since screen will be started in
+        # detached mode (-d -m), there's a race between when the `screen`
+        # command returns and when the .screenrc ("rc") script is finished
+        # executing. Thus, we cannot delete the temporary directory after
+        # calling screen, because screen's .screenrc script might still be
+        # referencing files in the temporary directory.
+        #
+        # Instead, create a final window within screen that deletes the
+        # temporary directory and then exits.
+        # TODO: why the sleep?
+        script_lines = [shlex.join(['rm', '-r', str(dir)]), 'sleep 3', 'exit']
+        cleanup_path = dir / 'cleanup.sh'
+        cleanup_path.write_text('\n'.join(script_lines) + '\n')
+        lines = ['', 'screen', f'readreg p {cleanup_path}', 'paste p']
+        screenrc.write('\n'.join(lines) + '\n')
+
+    debug("here's the rc file:\n")
+    debug((dir / 'rc').read_text())
 
 
 def deduce_user_shell() -> str:
@@ -230,22 +310,23 @@ def parse_command_line(args: List[str]) -> CommandLine:
 
 if __name__ == '__main__':
     options = parse_command_line(sys.argv[1:])
-    print(options)  # TODO: no
+    debug(options)
 
     with open(options.config_file) as config_file:
         config = parse_config(config_file)
 
-    print(config)  # TODO: no
+    debug(config)
 
     with tempfile.TemporaryDirectory() as workdir:
+        debug('temporary directory is', workdir)
         dirpath = Path(workdir)
         shell = deduce_user_shell()
-        print(f'login shell is {shell}')  # TODO: no
+        debug(f'login shell is {shell}')
         fill_directory(dirpath, config.windows, config.prelude, shell)
         screen_cmd = ['screen', '-d', '-m']
         if options.session_name:
             screen_cmd += ['-S', options.session_name]
-        screen_cmd += ['-c', str(dirpath / '.screenrc')]
+        screen_cmd += ['-c', str(dirpath / 'rc')]
         # Rather than invoking `screen` directly, wrap it in a shell script that
         # first sources the user's profile.
         # This is helpful when `cron` is the one invoking us, since such
@@ -254,5 +335,5 @@ if __name__ == '__main__':
         # likely to expect, since it's what they'd have if they ran `screen`
         # themselves.
         shell_script = '\n'.join(['. ~/.profile', shlex.join(screen_cmd), ''])
-        #  TODO subprocess.run([shell], text=True, input=shell_script, check=True)
-        subprocess.run(['cat'], text=True, input=shell_script, check=True)
+        subprocess.run([shell], text=True, input=shell_script, check=True)
+        shutil.copytree(workdir, '/tmp/thingy')  # TODO: no
