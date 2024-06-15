@@ -1,0 +1,32 @@
+# Each window begins with an unindented line containing the title of the
+# window.
+# Then there's an indented block of shell code to execute in the window.
+asus probe
+    cd ~/src/plant-stat
+    while true; do
+      echo python read.py
+      sleep 5
+    done
+
+# Here's another window.
+lookatmyplants.com fsgi
+    cd ~/src/fsgi
+    echo ./fsgi 127.0.0.1:8998 -- ~/src/plant-stat/plotter
+    cat <<'END_MESSAGE'
+    Even though this is a shell heredoc, it's still indented.
+    screen-compose does not interpret the content of code blocks at all.
+    Instead, it determines the indentation from the first indented line and
+    then copies the script into screen, stripping only the common indentation.
+    END_MESSAGE
+
+fowzystuff.com mover
+  # This comment lives in this embedded shell script, because it's indented.
+  # Here we used two spaces instead of the four spaces above. It's fine as long
+  # as you're consistent within a block. Tabs are not allowed.
+  cd ~/src/file-server/mover
+  echo ./mover
+# Here's a comment.
+# It's not part of the script above, because it's not indented.
+
+# The following window (titled "shell") doesn't have any script block.
+shell
