@@ -234,12 +234,12 @@ def fill_directory(dir: Path,
             ]
             if window.script != '':
                 script = window.script
+                # Make sure that the shell script ends with a newline, so that
+                # its last command is submitted in the window's shell.
                 if not script.endswith('\n'):
                     script = script + '\n'
                 script_path = dir / f'{i}.sh'
-                # Append a newline to ensure that the last shell command is
-                # submitted.
-                script_path.write_text(script + '\n')
+                script_path.write_text(script)
                 lines += [
                     # Read the shell script into a "register" named "p".
                     f'readreg p {script_path}',
