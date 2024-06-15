@@ -1,0 +1,258 @@
+#!/usr/bin/env python
+
+import argparse
+from dataclasses import dataclass
+import getpass
+from pathlib import Path
+import shlex
+import subprocess
+import sys
+import tempfile
+from typing import Iterable, List, Optional, Union
+
+
+@dataclass
+class Window:
+    """Window in the sense of a GNU screen window, i.e. a shell session"""
+    # title is the name of the window, as will appear in screen's listing
+    title: str
+    # script is the shell script to type into the window
+    script: str = ''
+
+
+@dataclass
+class Config:
+    """a parsed representation of the configuration file"""
+    # windows are the other sections of the configuration: one for each GNU
+    # screen window.
+    windows: List[Window]
+    # prelude is the .screenrc script to run after the hard-coded commands.
+    # prelude is empty if the configuration did not have a @prelude section.
+    prelude: str = ''
+
+
+@dataclass
+class CommandLine:
+    """a parsed representation of the command line arguments"""
+    # config_file is the path to the configuration file.
+    # The configuration file contains the definitions of each of the GNU screen
+    # windows, as well as other optional information like the @prelude.
+    config_file: Path
+    # session_name, if nonempty, overrides the name of the GNU screen session.
+    # If empty, then GNU screen will generate a name instead.
+    session_name: str = ''
+
+
+def parse_config(lines: Iterable[str]) -> Config:
+    """Parse the specified configuration file, which is given as a sequence of
+    `lines`. Raise an `Exception` if an error occurs.
+    """
+    # prelude is the contents of the first @prelude block, which might be an
+    # empty string. prelude is empty if there is no @prelude block. It's an
+    # error if there are multiple @prelude blocks.
+    prelude = ''
+    # prelude_line is the one-based line number of the @prelude block, if
+    # present.
+    prelude_line: Optional[int] = None
+    windows = []
+    # current_block is one of:
+    # - `None`: not in a block
+    # - `Window`: a GNU screen window definition
+    # - `str`: the name of a special block, e.g. '@prelude'
+    current_block: Union[None, Window, str] = None
+    current_block_lines = []
+    current_indent = ''
+    # This parser has three states:
+    #
+    # 1. At toplevel, looking for the title of the next block.
+    # 2. Just read a block title, looking for an indented code block, which
+    #    might be empty.
+    # 3. Inside an indented code block, looking for its end.
+    #
+    # You can determine the current state by combining the predicates
+    # `current_block is None` and `current_indent == ''`. See the table below.
+    # ```
+    # State  current_block is None  current_indent == ''
+    # -----  ---------------------  --------------------
+    #     1  True
+    #     2  False                   True
+    #     3  False                   False
+    # ```
+    for num, line in enumerate(lines, start=1):
+        print(f'current line is: {repr(line)}')  # TODO: no
+        # If there's a trailing newline, trim it off.  We'll add it back later
+        # with `'\n'.join(...)` if necessary.
+        if line.endswith('\n'):
+            line = line[:-1]
+        is_empty = (line == '')
+        is_comment = (line[:1] == '#')
+        # States can transition into each other without consuming another line,
+        # hence this "forever" loop.  Within the `while` loop, `break` is
+        # analogous to `continue` in the enclosing `for` loop.
+        while True:
+            # state 1?
+            if current_block is None:
+                if is_empty or is_comment:
+                    break  # consume next line of input
+                # This is the title of a new block.
+                # It mustn't start with any spaces or tabs, because block titles aren't
+                # indented.
+                if line.lstrip() != line:
+                    raise Exception(
+                        f'Error on line {num}: Unexpected indentation. I thought that this was going to be the title of a window or a @prelude section.'
+                    )
+                # Check for special sections ("@prelude"). Otherwise it's a window title.
+                if line[0] == '@':
+                    if line != '@prelude':
+                        raise Exception(
+                            f'Error on line {num}: Unexpected special section {line}. Only @prelude is supported.'
+                        )
+                    if prelude_line is not None:
+                        raise Exception(
+                            f'Error on line {num}: Duplicate @prelude section. Previously defined on line {prelude_line}.'
+                        )
+                    current_block = line
+                    prelude_line = num
+                    break  # consume next line of input
+                else:
+                    # It's a window title.
+                    current_block = Window(title=line)
+                    break  # consume next line of input
+            # state 2?
+            elif current_indent == '':
+                stripped = line.lstrip()
+                indent = line[:len(line) - len(stripped)]
+                if '\t' in indent:
+                    raise Exception(
+                        f'Error on line {num}: Indentation contains a tab character. Use spaces instead.'
+                    )
+                if indent == '':
+                    # This block is empty. Close the block and continue in state 1.
+                    if isinstance(current_block, Window):
+                        windows.append(current_block)
+                    else:
+                        assert current_block == '@prelude'
+                        prelude = ''
+                    current_block = None
+                else:
+                    # We have the indentation based on this first line of the indented block.
+                    current_indent = indent
+                    current_block_lines.append(stripped)
+                    break  # consume next line of input
+            # must be state 3
+            else:
+                # We're in an indented block. There are three cases:
+                # - The line is not indented. That means this block is over. Continue
+                #   in state 1.
+                # - The line is indented the wrong amount. That's an error.
+                # - The line is indented the correct amount.  Add it to the current
+                #   block's lines and move on to the next line.
+                stripped = line.lstrip()
+                indent = line[:len(line) - len(stripped)]
+                if indent == '':
+                    if isinstance(current_block, Window):
+                        current_block.script = '\n'.join(current_block_lines)
+                        windows.append(current_block)
+                    else:
+                        assert current_block == '@prelude'
+                        prelude = '\n'.join(current_block_lines)
+                    current_block_lines.clear()
+                    current_block = None
+                    current_indent = ''
+                elif not indent.startswith(current_indent):
+                    raise Exception(
+                        f'Error on line {num}: Inconsistent indentation. The indentation of the current block is {repr(current_indent)} ({len(current_indent)} spaces), but line {num} is indented with {repr(indent)} (length {len(indent)}).'
+                    )
+                else:
+                    current_block_lines.append(line[len(current_indent):])
+                    break  # consume next line of input
+
+    # No more lines. Finish up the last block, if necessary.
+    if isinstance(current_block, Window):
+        current_block.script = '\n'.join(current_block_lines)
+        windows.append(current_block)
+    elif current_block == '@prelude':
+        prelude = '\n'.join(current_block_lines)
+
+    return Config(windows, prelude)
+
+
+def fill_directory(dir: Path,
+                   windows: List[Window],
+                   prelude: str = '',
+                   shell_path: str = ''):
+    """Add files to the specified directory `dir`. The files will be used by
+    GNU screen to set up the specified `windows` after first executing the
+    optionally specified `prelude` of screen commands. Optionally specify
+    `shell_path`, a path to the command shell to use in the created windows.
+    """
+    'TODO'
+
+
+def deduce_user_shell() -> str:
+    """Look up the current user's login shell as configured in `/etc/passwd`,
+    and return the path to the shell. Raise an exception if an error occurs.
+    """
+    username = getpass.getuser()
+    with open('/etc/passwd') as etc_passwd:
+        for line in etc_passwd:
+            # Allow for comments. This is not required, but might as well.
+            line = line.strip()
+            if line[:1] == '#':
+                continue
+            first, *_, last = line.split(':')
+            if first == username:
+                return last
+    raise Exception(
+        f'unable to deduce login shell: current user, named {username}, is not listed in /etc/passwd'
+    )
+
+
+def parse_command_line(args: List[str]) -> CommandLine:
+    """Parse the specified command line arguments. If the arguments are
+    malformed or if help is requested, this function will not return.
+    """
+    parser = argparse.ArgumentParser(description='set up a GNU screen session')
+    parser.add_argument('-S',
+                        '--session-name',
+                        type=str,
+                        help='custom name for the session')
+    parser.add_argument('config_file',
+                        type=Path,
+                        help='path to configuration file')
+
+    parsed = parser.parse_args(args)
+    result = CommandLine(config_file=parsed.config_file)
+    if parsed.session_name:
+        result.session_name = parsed.session_name
+    return result
+
+
+if __name__ == '__main__':
+    options = parse_command_line(sys.argv[1:])
+    print(options)  # TODO: no
+
+    with open(options.config_file) as config_file:
+        config = parse_config(config_file)
+
+    print(config)  # TODO: no
+
+    with tempfile.TemporaryDirectory() as workdir:
+        dirpath = Path(workdir)
+        shell = deduce_user_shell()
+        print(f'login shell is {shell}')  # TODO: no
+        fill_directory(dirpath, config.windows, config.prelude, shell)
+        screen_cmd = ['screen', '-d', '-m']
+        if options.session_name:
+            screen_cmd += ['-S', options.session_name]
+        screen_cmd += ['-c', str(dirpath / '.screenrc')]
+        # Rather than invoking `screen` directly, wrap it in a shell script that
+        # first sources the user's profile.
+        # This is helpful when `cron` is the one invoking us, since such
+        # invocations do not occur in a login shell environment.
+        # A login shell environment is not necessary, but it's what a user is
+        # likely to expect, since it's what they'd have if they ran `screen`
+        # themselves.
+        shell_script = '\n'.join(['. ~/.profile', shlex.join(screen_cmd), ''])
+        #  TODO subprocess.run([shell], text=True, input=shell_script, check=True)
+        subprocess.run(['cat'], text=True, input=shell_script, check=True)
