@@ -1,0 +1,21 @@
+asus probe
+    cd ~/src/plant-stat
+    while true; do
+      python read.py
+      sleep 5
+    done
+
+lookatmyplants.com fsgi
+    cd ~/src/fsgi
+    ./fsgi 127.0.0.1:8998 -- ~/src/plant-stat/plotter
+
+fowzystuff.com mover
+    cd ~/src/file-server/mover
+    ./mover
+
+waybackinator.com
+    cd ~/src/waybackinator.com
+    /usr/local/bin/node ./waybackinator.js /home/david/src/waybackinator.com/tlds-alpha-by-domain.txt
+
+shell
+
