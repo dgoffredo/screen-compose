@@ -1,0 +1,11 @@
+webcam video
+    . ~/.bashrc # for Node Version Manager setup
+    cd ~/src/on-demand-server
+    ./on-demand-server :8080 :8888 -- stream-video /dev/video2 localhost:8888
+
+webcam stills
+    cd ~/Pictures/plants/webcam
+    fswebcam --device /dev/video2 --resolution 1280x720 --loop 600 '%Y-%m-%dT%H:%M:%S.jpg'
+
+shell
+
