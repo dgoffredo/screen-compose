@@ -3,6 +3,7 @@
 import argparse
 from dataclasses import dataclass
 import getpass
+import io
 import json
 from pathlib import Path
 import shlex
@@ -21,6 +22,9 @@ def debug(*args, **kwargs):
 @dataclass
 class Window:
     """Window in the sense of a GNU screen window, i.e. a shell session"""
+    # line is the one-based line number in the configuration file where this
+    # window section begins (the title line).
+    line: int
     # title is the name of the window, as will appear in screen's listing
     title: str
     # script is the shell script to type into the window
@@ -46,6 +50,9 @@ class CommandLine:
     # The configuration file contains the definitions of each of the GNU screen
     # windows, as well as other optional information like the @prelude.
     config_file: Path
+    # lint is whether to just check the config file syntax, instead of actually
+    # running GNU screen.
+    lint: bool
     # session_name, if nonempty, overrides the name of the GNU screen session.
     # If empty, then GNU screen will generate a name instead.
     session_name: str = ''
@@ -139,7 +146,7 @@ def parse_config(lines: Iterable[str]) -> Config:
                         raise Exception(
                             f'Error on line {num}: Invalid window title: {error_msg}'
                         )
-                    current_block = Window(title=line)
+                    current_block = Window(line=num, title=line)
                     break  # consume next line of input
             # state 2?
             elif current_indent == '':
@@ -290,20 +297,55 @@ def parse_command_line(args: List[str]) -> CommandLine:
     """Parse the specified command line arguments. If the arguments are
     malformed or if help is requested, this function will not return.
     """
-    parser = argparse.ArgumentParser(description='set up a GNU screen session')
+    parser = argparse.ArgumentParser(description='Set up a GNU Screen session.')
     parser.add_argument('-S',
                         '--session-name',
                         type=str,
                         help='custom name for the session')
+    parser.add_argument(
+        '--lint',
+        action='store_true',
+        help='validate configuration without running GNU screen')
     parser.add_argument('config_file',
                         type=Path,
                         help='path to configuration file')
 
     parsed = parser.parse_args(args)
-    result = CommandLine(config_file=parsed.config_file)
+    debug(parsed)
+    result = CommandLine(lint=parsed.lint, config_file=parsed.config_file)
     if parsed.session_name:
         result.session_name = parsed.session_name
     return result
+
+
+def check_shell_syntax(shell_path: str, config: Config) -> Optional[str]:
+    """Use the command shell located at the specified `shell_path` to check the
+    shell script syntax of each code block in the specified `config`. Return an
+    error diagnostic if an error is encountered. Return `None` otherwise.
+    """
+    command = [shell_path, '-n']
+    for window in config.windows:
+        result = subprocess.run(command,
+                                text=True,
+                                check=False,
+                                input=window.script)
+        if result.returncode != 0:
+            quoted = json.dumps(window.title)
+            message = io.StringIO()
+            print(
+                f'The GNU screen window titled {quoted} has a shell syntax error. {quoted} begins on line {window.line} of the configuration file.',
+                file=message)
+            print(
+                'Here is the problematic script with lines numbered from the top, for comparison with any error messages printed by the shell above:',
+                file=message)
+            print('', file=message)
+            lines = window.script.split('\n')
+            width = len(str(len(lines)))
+            template = f'{{:{width}}} {{}}'
+            for i, line in enumerate(lines, start=1):
+                print(template.format(i, line), file=message)
+            return message.getvalue()
+    return None
 
 
 if __name__ == '__main__':
@@ -315,11 +357,19 @@ if __name__ == '__main__':
 
     debug(config)
 
-    workdir = tempfile.mkdtemp()
-    debug('temporary directory is', workdir)
-    dirpath = Path(workdir)
     shell = deduce_user_shell()
     debug(f'login shell is {shell}')
+
+    if options.lint:
+        error = check_shell_syntax(shell, config)
+        if error:
+            print(error, file=sys.stderr)
+            sys.exit(1)
+        else:
+            sys.exit(0)
+
+    dirpath = Path(tempfile.mkdtemp())
+    debug('temporary directory is', dirpath)
     fill_directory(dirpath, config.windows, config.prelude, shell)
     screen_cmd = ['screen', '-d', '-m']
     if options.session_name:
