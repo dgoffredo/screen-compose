@@ -318,12 +318,12 @@ def parse_command_line(args: List[str]) -> CommandLine:
     return result
 
 
-def check_shell_syntax(shell: Path, config: Config) -> Optional[str]:
-    """Use the specified `shell` to check the shell script syntax of each code
-    block in the specified `config`. Return an error diagnostic if an error is
-    encountered. Return `None` otherwise.
+def check_shell_syntax(shell_path: str, config: Config) -> Optional[str]:
+    """Use the command shell located at the specified `shell_path` to check the
+    shell script syntax of each code block in the specified `config`. Return an
+    error diagnostic if an error is encountered. Return `None` otherwise.
     """
-    command = [str(shell), '-n']
+    command = [shell_path, '-n']
     for window in config.windows:
         result = subprocess.run(command,
                                 text=True,
@@ -345,6 +345,7 @@ def check_shell_syntax(shell: Path, config: Config) -> Optional[str]:
             for i, line in enumerate(lines, start=1):
                 print(template.format(i, line), file=message)
             return message.getvalue()
+    return None
 
 
 if __name__ == '__main__':
