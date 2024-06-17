@@ -297,7 +297,7 @@ def parse_command_line(args: List[str]) -> CommandLine:
     """Parse the specified command line arguments. If the arguments are
     malformed or if help is requested, this function will not return.
     """
-    parser = argparse.ArgumentParser(description='set up a GNU screen session')
+    parser = argparse.ArgumentParser(description='Set up a GNU Screen session.')
     parser.add_argument('-S',
                         '--session-name',
                         type=str,
