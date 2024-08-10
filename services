@@ -17,5 +17,12 @@ waybackinator.com
     cd ~/src/waybackinator.com
     /usr/local/bin/node ./waybackinator.js /home/david/src/waybackinator.com/tlds-alpha-by-domain.txt
 
+httpnag
+    cd ~/src/httpnag
+    python httpnag.py --address 142.250.65.174 --port 80 --verbose
+
+access log
+    tail --follow=name /var/log/nginx/access.log
+
 shell
 
