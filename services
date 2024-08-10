@@ -1,4 +1,4 @@
-asus probe
+probes
     cd ~/src/plant-stat
     while true; do
       python read.py
