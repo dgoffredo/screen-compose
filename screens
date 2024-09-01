@@ -5,11 +5,11 @@ scraper
       printf '.'
       sleep 10
     done
-
+    
     rm -rf job
     mkdir job
     ./scrape db.sqlite job
-
+    
     find . -maxdepth 1 -name '*.br' -exec mv {} archive \;
   done
 
