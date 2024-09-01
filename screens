@@ -1,0 +1,17 @@
+scraper
+  cd ~/src/food-price
+  while true; do
+    while [ -e pause ]; do
+      printf '.'
+      sleep 10
+    done
+
+    rm -rf job
+    mkdir job
+    ./scrape db.sqlite job
+
+    find . -maxdepth 1 -name '*.br' -exec mv {} archive \;
+  done
+
+shell
+
