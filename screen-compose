@@ -371,7 +371,14 @@ if __name__ == '__main__':
     dirpath = Path(tempfile.mkdtemp())
     debug('temporary directory is', dirpath)
     fill_directory(dirpath, config.windows, config.prelude, shell)
-    screen_cmd = ['screen', '-d', '-m']
+    # TODO: Why do I need to specify "-T" on some machines but not on others?
+    # The problem that I was having is that some text colors weren't working.
+    # grep's red-colored output would display, but the shell prompt (PS1) colors
+    # weren't displaying, and vim/nvim's syntax highlighting wasn't displaying.
+    # The difference, I think, was that the TERM environment variable was set
+    # to "screen" instead of to "screen.xterm-256color", which is what it is
+    # set to when I use screen-compose on an older Ubuntu.
+    screen_cmd = ['screen', '-d', '-m', '-T', 'screen.xterm-256color']
     if options.session_name:
         screen_cmd += ['-S', options.session_name]
     screen_cmd += ['-c', str(dirpath / 'rc')]
@@ -384,3 +391,4 @@ if __name__ == '__main__':
     # themselves.
     shell_script = '\n'.join(['. ~/.profile', shlex.join(screen_cmd), ''])
     subprocess.run([shell], text=True, input=shell_script, check=True)
+
