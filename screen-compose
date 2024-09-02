@@ -389,6 +389,13 @@ if __name__ == '__main__':
     # A login shell environment is not necessary, but it's what a user is
     # likely to expect, since it's what they'd have if they ran `screen`
     # themselves.
-    shell_script = '\n'.join(['. ~/.profile', shlex.join(screen_cmd), ''])
+    # Also, set the DISPLAY environment variable if it doesn't have a value.
+    shell_script = '\n'.join([
+        '. ~/.profile',
+        'DISPLAY=${DISPLAY:-localhost:10}',
+        'export DISPLAY',
+        shlex.join(screen_cmd),
+        ''
+    ])
     subprocess.run([shell], text=True, input=shell_script, check=True)
 
